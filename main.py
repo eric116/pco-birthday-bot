@@ -1,43 +1,54 @@
-import pco as p
-import pco_config as pco
+import pypco
+from datetime import datetime, timedelta, date
 import date_comp as dc
 import credentials as cred
-import chemail as che
-import scheduler as sched
-from datetime import datetime
+import mailer
 
 today = datetime.today().strftime('%m-%d-%Y')
 
-# schedule_day should equal the day you want the app to run each week, starting with 0 on Monday
-schedule_day = 0
-scheduled = sched.schedule_check(schedule_day)
+pco = pypco.PCO(cred.pco_app_id, cred.pco_secret)
 
+params = {
+    'where[child]': 'true',
+    'where[active]': 'true'
+}
+
+this_week_bdays = {}
 
 def main():
-    for team_id in pco.team_ids:
-        p.get_team_members(team_id)
+    for person in pco.iterate('/people/v2/people', **params):
+        child_name = person['data']['attributes']['name']
+        child_birthdate = person['data']['attributes']['birthdate']
+        #add child and birthdate to list if the birthdate is filled out, otherwise pass go and collect $0
+        if child_birthdate is None:
+            pass
+        else:
+            child_birthdate = datetime.date(datetime.strptime(child_birthdate, '%Y-%m-%d'))
+            if date.today() <= child_birthdate.replace(year=datetime.today().year) <= date.today() + timedelta(days=7):
+                this_week_bdays.update({child_name: child_birthdate})
+            else:
+                pass
+    for child_name, child_birthdate in this_week_bdays.items():
+        print(child_name, child_birthdate)
 
-    p.get_next_plan(pco.service_ids['Elevate'])
-
-    for x, y in p.tech_team.items():
-        name = x
-        birthday = y['birthday']
-        next_plans = y['next plan']
-        dc.bday_priority(name, birthday, next_plans)
-
+def body_builder_catch(this_week_bdays):
+    bday_catch = []
+    this_week_bdays = {child_name: child_birthdate for child_name, child_birthdate in sorted(this_week_bdays.items(), key=lambda item: item[1])}
+    for child_name, child_birthdate in this_week_bdays.items():
+        birthday = datetime.strftime(child_birthdate, '%B %d')
+        bday_catch.append(f"{child_name}'s birthday is {birthday}\n")
+    bday_str = "".join(bday_catch)
+    return bday_str
 
 def body_assemble():
-    if len(this_week_bdays) or len(this_plan_bdays) > 0:
-        body = f'Hi {cred.receiver_name}. This is your weekly birthday notification:\n\n{this_plan_bdays}\n{this_week_bdays}\n\nHope you have an amazing day!'
+    if len(this_week_bdays) > 0:
+        body = f'Hi {cred.receiver_name},\n\nHere\'s your list of kiddos with a birthday in the next week:\n\n{formattedBirthdays}\n\nHope you have an amazing day!'
     else:
-        body = f'Hi {cred.receiver_name}. No birthday reminders this week :)'
+        body = f'Hi {cred.receiver_name},\n\nNo birthday reminders this week :)'
     return body
 
-
-if scheduled == True:
-    main()
-    this_plan_bdays = dc.body_builder_sched(dc.bday_scheduled)
-    this_week_bdays = dc.body_builder_catch(dc.bday_before_weekend)
-    body = body_assemble()
-    subject = f'Weekly Birthday Report({today})'
-    che.send_email(subject, body)
+main()
+formattedBirthdays = body_builder_catch(this_week_bdays)
+body = body_assemble()
+subject = f'Weekly Birthday Report ({today})'
+mailer.send_email(subject, body)
